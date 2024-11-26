@@ -32,8 +32,8 @@ class DynamicPlot(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("Dynamic Plot with Alignment Controls")
-        self.setGeometry(100, 100, 800, 600)
+        self.setWindowTitle("Dynamic Plot with One Dimensional Scan")
+        self.setGeometry(100, 100, 800, 800)
 
         # Create main widget
         self.main_widget = QWidget(self)
@@ -41,6 +41,10 @@ class DynamicPlot(QMainWindow):
 
         # Create layout
         layout = QVBoxLayout(self.main_widget)
+
+        # Label for the dropdown
+        self.msglabel1 = QLabel(f"<span style='font-size:16pt; font-weight:bold; color:blue;'>Press scan bottom to start a scanning ...")
+        layout.addWidget(self.msglabel1)
 
         # Create Matplotlib figure and canvas
         self.figure = Figure()
@@ -71,21 +75,24 @@ class DynamicPlot(QMainWindow):
         # Data for the plot
         self.data = {"x": [], "y": [], "label": "Live Data"}
 
+        # Create a horizontal layout for checkboxes
+        scanning_layout = QHBoxLayout()
+
         # Label for the dropdown
         self.label1 = QLabel("Select a motor from the dropdown:")
-        layout.addWidget(self.label1)
+        scanning_layout.addWidget(self.label1)
 
         # Create the dropdown (QComboBox)
         self.dropdown1 = QComboBox()
-        layout.addWidget(self.dropdown1)
+        scanning_layout.addWidget(self.dropdown1)
 
         # Label for the dropdown
         self.label2 = QLabel("Select a detector from the dropdown:")
-        layout.addWidget(self.label2)
+        scanning_layout.addWidget(self.label2)
 
         # Create the dropdown (QComboBox)
         self.dropdown2 = QComboBox()
-        layout.addWidget(self.dropdown2)
+        scanning_layout.addWidget(self.dropdown2)
 
         # Load data into the dropdown
         self.load_excel_data()
@@ -94,6 +101,8 @@ class DynamicPlot(QMainWindow):
         self.dropdown1.currentTextChanged.connect(self.on_dropdown1_change)
         self.dropdown2.currentTextChanged.connect(self.on_dropdown2_change)
 
+        # Add the horizontal box into the layout
+        layout.addLayout(scanning_layout)
         
         # Add label and textbox for optimized values
         self.optimized_label = QLabel("Optimized %s:" % self.dropdown1.itemText(0))
@@ -193,6 +202,16 @@ class DynamicPlot(QMainWindow):
                     label="Middle Position",
                 )
 
+        if self.left_cross != None and self.right_cross != None:
+            self.msglabel1.setText(
+        f"<span style='font-size:16pt; font-weight:bold; color:blue;'>Left crosshair:</span> (%.02f, %.02f), "
+        f"<span style='font-size:16pt; font-weight:bold; color:green;'>Middle position:</span> (%.02f, %.02f), "  
+        f"<span style='font-size:16pt; font-weight:bold; color:red;'>Right crosshair:</span> (%.02f, %.02f) " %
+        (*self.left_cross, *middle_position, *self.right_cross))
+        elif self.left_cross != None:
+            self.msglabel1.setText(f"<span style='font-size:16pt; font-weight:bold; color:blue;'>Left crosshair:</span> (%.02f, %.02f)" % self.left_cross)
+        elif self.right_cross != None:
+            self.msglabel1.setText(f"<span style='font-size:16pt; font-weight:bold; color:red;'>Right crosshair:</span> (%.02f, %.02f)" % self.right_cross)
         self.ax.legend()
         self.canvas.draw()
 
@@ -316,6 +335,9 @@ class DynamicPlot(QMainWindow):
 
     def scan(self):
 
+        # Display the message as scanning 
+        self.msglabel1.setText(f"<span style='font-size:16pt; font-weight:bold; color:green;'>Scanning ...")
+
         # Re-Initialize crosshair points and artists
         self.left_cross = None  # Position of left crosshair
         self.right_cross = None  # Position of right crosshair
@@ -355,6 +377,10 @@ class DynamicPlot(QMainWindow):
         i = self.current_index
         if i >= self.num:
             self.scan_timer.stop()  # Stop the timer when all data is processed
+
+            # Display the message as scanning 
+            self.msglabel1.setText(f"<span style='font-size:16pt; font-weight:bold; color:green;'>Scan finished!")
+
             # Display optimized value
             self.optimized_input.setText("%s" % [[self.checked_names[n], self.data[self.checked_names[n]]['optimized values']] for n in np.arange(len(self.checked_names))])
 
@@ -409,7 +435,7 @@ class DynamicPlot(QMainWindow):
 
             # Handle timeout or EPICS communication errors
 
-            self.label1.setText(f"Error during scan step: {e}")
+            self.msglabel1.setText(f"<span style='font-size:16pt; font-weight:bold; color:red;'>Error during scan step: {e}")
             self.scan_timer.stop()  # Stop the scan
             return 
 
