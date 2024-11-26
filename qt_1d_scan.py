@@ -47,6 +47,16 @@ class DynamicPlot(QMainWindow):
         self.canvas = FigureCanvas(self.figure)
         layout.addWidget(self.canvas)
 
+        # Initialize crosshair points and artists
+        self.left_cross = None  # Position of left crosshair
+        self.right_cross = None  # Position of right crosshair
+        self.left_marker = None  # Matplotlib artist for left crosshair
+        self.right_marker = None  # Matplotlib artist for right crosshair
+        self.middle_marker = None  # Matplotlib artist for the middle point
+
+        # Connect the event handler
+        self.cid = self.canvas.mpl_connect("button_press_event", self.on_click)
+
         # Initialize plot
         self.ax = self.figure.add_subplot(111)
         self.ax.set_title("Dynamic Data")
@@ -134,6 +144,58 @@ class DynamicPlot(QMainWindow):
 
         # Add table to layout
         layout.addWidget(self.table)
+
+    def on_click(self, event):
+        """Handle mouse click events."""
+        if event.inaxes != self.ax:
+            return  # Ignore clicks outside the plot area
+
+        if event.button == 1:  # Left click
+            self.left_cross = (event.xdata, event.ydata)
+            # Update or create the left crosshair marker
+            if self.left_marker:
+                self.left_marker.set_data(event.xdata, event.ydata)
+            else:
+                self.left_marker, = self.ax.plot(
+                    event.xdata, event.ydata, "rx", label="Left Crosshair"
+                )
+            #print(f"Left crosshair: {self.left_cross}")
+
+        elif event.button == 3:  # Right click
+            self.right_cross = (event.xdata, event.ydata)
+            # Update or create the right crosshair marker
+            if self.right_marker:
+                self.right_marker.set_data(event.xdata, event.ydata)
+            else:
+                self.right_marker, = self.ax.plot(
+                    event.xdata, event.ydata, "bo", label="Right Crosshair"
+                )
+            #print(f"Right crosshair: {self.right_cross}")
+
+        # Recalculate middle position and average if both crosshairs are placed
+        if self.left_cross and self.right_cross:
+            middle_position = (
+                (self.left_cross[0] + self.right_cross[0]) / 2,
+                (self.left_cross[1] + self.right_cross[1]) / 2,
+            )
+            average_value = (self.left_cross[1] + self.right_cross[1]) / 2
+            #print(f"Middle position: {middle_position}")
+            #print(f"Average value: {average_value}")
+
+            # Update or create the middle marker
+            if self.middle_marker:
+                self.middle_marker.set_data(middle_position[0], middle_position[1])
+            else:
+                self.middle_marker, = self.ax.plot(
+                    middle_position[0],
+                    middle_position[1],
+                    "g+",
+                    label="Middle Position",
+                )
+
+        self.ax.legend()
+        self.canvas.draw()
+
 
     def on_table_item_changed(self, item):
         """Recalculate dependent values when Start, End, or Step changes."""
@@ -253,6 +315,14 @@ class DynamicPlot(QMainWindow):
         self.canvas.draw()
 
     def scan(self):
+
+        # Re-Initialize crosshair points and artists
+        self.left_cross = None  # Position of left crosshair
+        self.right_cross = None  # Position of right crosshair
+        self.left_marker = None  # Matplotlib artist for left crosshair
+        self.right_marker = None  # Matplotlib artist for right crosshair
+        self.middle_marker = None  # Matplotlib artist for the middle point
+
         """Perform motor scan, record detector and update the plot."""
         # Timer for updating random data
         self.current_index = 0
@@ -290,37 +360,58 @@ class DynamicPlot(QMainWindow):
 
             return
 
-        # Update the data to the current step
-        epics.caput(self.pvList.loc[self.pvList["Alias"] == self.text["motor"], "PV"].values[0]+".VAL", self.scanPos[i]) 
-        time.sleep(self.accu*0.1)
-        self.data["x"] += [epics.caget(self.pvList.loc[self.pvList["Alias"] == self.text["motor"], "PV"].values[0]+".RBV")]
-        # Count  detector for accumulate time
-        time.sleep(self.accu)
-        self.data["y"] += [epics.caget(self.pvList.loc[self.pvList["Alias"] == self.text["detector"], "PV"].values[0])]
- 
+        try:
+            # Update the data to the current step
+            motor_pv = self.pvList.loc[self.pvList["Alias"] == self.text["motor"], "PV"].values[0]+".VAL"
+            epics.caput(motor_pv, self.scanPos[i], timeout=4) 
+            time.sleep(self.accu * 0.1)  # Allow time for movement
 
-        if i > 1:
-            # Fit to any function for the current data slice
-            try:
-                for n in np.arange(len(self.checked_names)):
-                    checked_name = self.checked_names[n]
-                    popt, _ = curve_fit(self.function_map[checked_name], self.data['x'], self.data['y'])
-                    #popt, _ = curve_fit(self.function_map[checked_name], self.data['x'], self.data['y'], p0=[0, 0.1, 1])
-                    self.data[checked_name]["optimized values"] = popt  # Save the best fitting value
-                    self.x_fine_values = np.linspace(self.data['x'][0], self.data['x'][-1], len(self.data['x']) * 10)
-                    self.data[checked_name]["fit_x"], self.data[checked_name]["fit_y"] = self.x_fine_values, self.function_map[checked_name](self.x_fine_values, *popt)
-            except RuntimeError:
-                pass  # Ignore fitting errors for small data points
-        else:
-            self.data["fit_x"], self.data["fit_y"] = [], []
+            # Read the motor position
+            motor_rbv = motor_pv.replace(".VAL", ".RBV")
+            motor_position = epics.caget(motor_rbv, timeout=4)
+            if motor_position is None:
+                raise TimeoutError(f"Timeout reading motor position from {motor_rbv}")
+            self.data["x"].append(motor_position)
 
-        # Update the plot
-        self.update_plot()
+            # Count  detector for accumulate time
+            time.sleep(self.accu)
 
-        # Move to the next data point
-        self.current_index += 1
+            detector_pv = self.pvList.loc[self.pvList["Alias"] == self.text["detector"], "PV"].values[0]
+            detector_value = epics.caget(detector_pv, timeout=4)
+            if detector_value is None:
+                raise TimeoutError(f"Timeout reading detector value from {detector_pv}")
+            self.data["y"].append(detector_value)
 
-        #print(self.data['x'])
+            if i > 1:
+                # Fit to any function for the current data slice
+                try:
+                    for n in np.arange(len(self.checked_names)):
+                        checked_name = self.checked_names[n]
+                        popt, _ = curve_fit(self.function_map[checked_name], self.data['x'], self.data['y'])
+                        #popt, _ = curve_fit(self.function_map[checked_name], self.data['x'], self.data['y'], p0=[0, 0.1, 1])
+                        self.data[checked_name]["optimized values"] = popt  # Save the best fitting value
+                        self.x_fine_values = np.linspace(self.data['x'][0], self.data['x'][-1], len(self.data['x']) * 10)
+                        self.data[checked_name]["fit_x"], self.data[checked_name]["fit_y"] = self.x_fine_values, self.function_map[checked_name](self.x_fine_values, *popt)
+                except RuntimeError:
+                    pass  # Ignore fitting errors for small data points
+            else:
+                self.data["fit_x"], self.data["fit_y"] = [], []
+
+            # Update the plot
+            self.update_plot()
+
+            # Move to the next data point
+            self.current_index += 1
+
+            #print(self.data['x'])
+
+        except (TimeoutError, epics.ca.ChannelAccessException) as e:
+
+            # Handle timeout or EPICS communication errors
+
+            self.label1.setText(f"Error during scan step: {e}")
+            self.scan_timer.stop()  # Stop the scan
+            return 
 
     def align_theta(self):
         """Perform Theta alignment and update the plot."""
