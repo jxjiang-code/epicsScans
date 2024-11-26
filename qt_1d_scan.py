@@ -1,12 +1,14 @@
 import sys
 import numpy as np
 import pandas as pd
+import openpyxl
+import json
 import epics
 import time
 import PyQt5.QtCore as Qt
 from scipy.optimize import curve_fit
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QVBoxLayout, QWidget, QLabel, QLineEdit, QPushButton, QComboBox, QTableWidget, QTableWidgetItem, QHBoxLayout, QCheckBox)
+    QApplication, QMainWindow, QVBoxLayout, QWidget, QLabel, QLineEdit, QPushButton, QComboBox, QTableWidget, QTableWidgetItem, QHBoxLayout, QCheckBox, QMenuBar, QAction, QFileDialog, QMessageBox, QDialog)
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt5.QtCore import QTimer
@@ -41,6 +43,10 @@ class DynamicPlot(QMainWindow):
 
         # Create layout
         layout = QVBoxLayout(self.main_widget)
+
+
+        # Add a menu bar
+        self.create_menu_bar()
 
         # Label for the dropdown
         self.msglabel1 = QLabel(f"<span style='font-size:16pt; font-weight:bold; color:blue;'>Press scan bottom to start a scanning ...")
@@ -105,16 +111,23 @@ class DynamicPlot(QMainWindow):
         layout.addLayout(scanning_layout)
         
         # Add label and textbox for optimized values
+        # Create a horizontal layout for checkboxes
+        optimize_layout = QHBoxLayout()
+        # Label for the dropdown
         self.optimized_label = QLabel("Optimized %s:" % self.dropdown1.itemText(0))
         self.text = {"motor": self.dropdown1.itemText(0), "detector": self.dropdown2.itemText(0)}
         self.data["label"] = self.dropdown1.itemText(0)
         self.optimized_input = QLineEdit()
-        layout.addWidget(self.optimized_label)
-        layout.addWidget(self.optimized_input)
+        optimize_layout.addWidget(self.optimized_label)
+        optimize_layout.addWidget(self.optimized_input)
+
 
         # Add checkboxes for fitting options
         self.add_fitting_options(layout)
 
+        # Add label and textbox for optimized values
+        layout.addLayout(optimize_layout)
+        
         # Mapping checkboxes to functions
         self.function_map = {
             "Linear": linear,
@@ -123,14 +136,28 @@ class DynamicPlot(QMainWindow):
             "Error function": error_function,
         }
 
-        # Buttons for alignment
-        self.scan_button = QPushButton("Scan")
-        self.scan_button.clicked.connect(self.scan)
-        layout.addWidget(self.scan_button)
 
         # Add table for scan parameters
         self.add_scan_parameters_table(layout)
 
+        # Buttons for alignment
+        self.scan_button = QPushButton("SCAN")
+        self.scan_button.clicked.connect(self.scan)
+        # Change button color to blue and text to white
+        self.scan_button.setStyleSheet("""
+            QPushButton {
+                background-color: grey; 
+                color: white;
+                font-weight: bold;  /* Optional: Make text bold */
+                border-radius: 5px; /* Optional: Add rounded corners */
+                padding: 5px;       /* Optional: Add padding for a nicer look */
+            }
+            QPushButton:hover {
+                background-color: lightblue; /* Optional: Change color on hover */
+            }
+        """)
+
+        layout.addWidget(self.scan_button)
 
     def add_scan_parameters_table(self, layout):
         # Create a table with 2 rows and 6 columns
@@ -253,21 +280,25 @@ class DynamicPlot(QMainWindow):
             elif col == 3:
                 # Recalculate Number`
                 if step != 0:
-                    num = int((end - start)/step) + 1
+                    num = abs(int((end - start)/step)) + 1
+                    if (end - start)/step < 0:
+                        self.table.item(row, 0).setText(f"{end:.3f}")
+                        self.table.item(row, 2).setText(f"{start:.3f}")
                     self.table.item(row, 3).setText(f"{step:.3f}")
                     self.table.item(row, 4).setText(f"{num}")
                 else:
                     self.table.item(row, 3).setText(f"{step:.3f}")
                     self.table.item(row, 4).setText("0")
             elif col == 4:
-                if num != 0:
+                if num > 1:
                     # Recalculate step`
                     step = (end - start)/(num-1)
                     self.table.item(row, 3).setText(f"{step:.3f}")
                     self.table.item(row, 4).setText(f"{num}")
                 else:
-                    self.table.item(row, 3).setText("0")
-                    self.table.item(row, 4).setText(f"{num}")
+                    step = end - start
+                    self.table.item(row, 3).setText(f"{step:.3f}")
+                    self.table.item(row, 4).setText("1")
         finally:
             # Re-enable signals after programmatic updates
             self.table.blockSignals(False) 
@@ -298,6 +329,7 @@ class DynamicPlot(QMainWindow):
             # Load the Excel file
             file_path = "./scan_pvs_table.xlsx"  # Replace with your Excel file path
             self.pvList = pd.read_excel(file_path)
+            print(self.pvList)
 
             # Check if the column 'alias' exists
             if "Alias" in self.pvList.columns:
@@ -415,13 +447,16 @@ class DynamicPlot(QMainWindow):
                         checked_name = self.checked_names[n]
                         popt, _ = curve_fit(self.function_map[checked_name], self.data['x'], self.data['y'])
                         #popt, _ = curve_fit(self.function_map[checked_name], self.data['x'], self.data['y'], p0=[0, 0.1, 1])
-                        self.data[checked_name]["optimized values"] = popt  # Save the best fitting value
+                        self.data[checked_name]["optimized values"] = list(popt)  # Save the best fitting value
                         self.x_fine_values = np.linspace(self.data['x'][0], self.data['x'][-1], len(self.data['x']) * 10)
-                        self.data[checked_name]["fit_x"], self.data[checked_name]["fit_y"] = self.x_fine_values, self.function_map[checked_name](self.x_fine_values, *popt)
+                        self.data[checked_name]["fit_x"], self.data[checked_name]["fit_y"] = list(self.x_fine_values), list(self.function_map[checked_name](self.x_fine_values, *popt))
                 except RuntimeError:
                     pass  # Ignore fitting errors for small data points
             else:
                 self.data["fit_x"], self.data["fit_y"] = [], []
+            
+            # Save the PV and EGU information
+            self.data["scan"], self.data["fitting"] = self.text, self.checked_names 
 
             # Update the plot
             self.update_plot()
@@ -439,20 +474,199 @@ class DynamicPlot(QMainWindow):
             self.scan_timer.stop()  # Stop the scan
             return 
 
-    def align_theta(self):
-        """Perform Theta alignment and update the plot."""
-        self.x_values = np.linspace(-1, 1, 50)
-        self.y_values = gaussian(self.x_values, 0, 0.1, 1) + 0.05 * np.random.normal(size=self.x_values.size)
+    def create_menu_bar(self):
+        """Create the menu bar with File and Edit options."""
+        menu_bar = self.menuBar()
 
-        # Update data for the plot
-        self.data["x"], self.data["y"] = self.x_values, self.y_values
-        self.data["label"] = "Theta-stage Alignment"
-        self.current_index = 0
+        # File menu
+        file_menu = menu_bar.addMenu("File")
+
+        # Add 'Load' action in File menu
+        load_action = QAction('Load', self)
+        load_action.triggered.connect(self.load_data)
+        file_menu.addAction(load_action)
+
+        save_action = QAction("Save", self)
+        save_action.triggered.connect(self.save_data)
+        file_menu.addAction(save_action)
+
+        save_figure_action = QAction("Save the Figure", self)
+        save_figure_action.triggered.connect(self.save_figure)
+        file_menu.addAction(save_figure_action)
+
+        # Edit menu
+        edit_menu = menu_bar.addMenu("Edit")
+
+        edit_excel_action = QAction("Edit the Excel File", self)
+        edit_excel_action.triggered.connect(self.edit_excel_file)
+        edit_menu.addAction(edit_excel_action)
+
+    def save_data(self):
+        """Save the data to a file."""
+        options = QFileDialog.Options()
+        file_name, _ = QFileDialog.getSaveFileName(self, "Save Data", "", "CSV Files (*.json);;All Files (*)", options=options)
+        if file_name:
+            try:
+                # Write the dictionary to the selected file in JSON format
+                with open(file_name, 'w') as f:
+                    json.dump(self.data, f, indent=4)
+                QMessageBox.information(self, "Save Data", f"Data successfully saved to {file_name}")
+            except Exception as e:
+                QMessageBox.warning(self, "Save Data", f"Error saving data: {str(e)}")
+
+    def save_figure(self):
+        """Save the figure to a file."""
+        options = QFileDialog.Options()
+        file_name, _ = QFileDialog.getSaveFileName(self, "Save Figure", "", "PNG Files (*.png);;All Files (*)", options=options)
+        if file_name:
+            self.figure.savefig(file_name)
+            QMessageBox.information(self, "Save Figure", f"Figure saved to {file_name}")
+
+    def load_data(self):
+        """Load data from JSON and update the plot."""
+        # Open file dialog to select the JSON file
+        file_name, _ = QFileDialog.getOpenFileName(self, "Open JSON File", "", "JSON Files (*.json)")
+        if file_name:
+            try:
+                # Load data from JSON file
+                with open(file_name, 'r') as file:
+                    loaded_data = json.load(file)
+                
+                # Update self.data with loaded data
+                self.data = loaded_data
+
+                # Update the plot with the loaded data
+                self.load_plot()
+
+            except Exception as e:
+                print(f"Error loading data: {e}")
+
+    def load_plot(self):
+        """Update the plot with current data."""
+        self.ax.clear()
         
-        # Timer for updating random data
-        self.align_timer = QTimer(self)
-        self.align_timer.timeout.connect(self.update_align_step)
-        self.align_timer.start(500)  # Update every 1 second
+        # Reload the json files to the variables
+        self.text = self.data["scan"]
+        self.checked_names = self.data["fitting"]
+
+        self.ax.set_title(self.data["label"])
+        self.ax.set_xlabel("%s (%s)"  % (self.text['motor'], self.pvList.loc[self.pvList["Alias"] == self.text["motor"], "EGU"].values[0]))
+        self.ax.set_ylabel("%s (%s)"  % (self.text['detector'], self.pvList.loc[self.pvList["Alias"] == self.text["detector"], "EGU"].values[0]))
+        self.ax.plot(self.data["x"], self.data["y"], "o-", label="Data")
+        for n in np.arange(len(self.checked_names)):
+            checked_name = self.checked_names[n]
+            self.ax.plot(self.data[checked_name]["fit_x"], self.data[checked_name]["fit_y"], "-", label="%s Fitting" % checked_name)
+        self.ax.legend()
+        self.canvas.draw()
+
+    def edit_excel_file(self):
+        """Edit the Excel file."""
+        # Open file dialog to select an Excel file
+        options = QFileDialog.Options()
+        file_name, _ = QFileDialog.getOpenFileName(self, "Open Excel File", "", "Excel Files (*.xlsx;*.xls);;All Files (*)", options=options)
+        
+        if file_name:
+            try:
+                # Load the Excel file using openpyxl
+                wb = openpyxl.load_workbook(file_name)
+                sheet = wb.active
+
+                # Show a message box to confirm the file loading
+                QMessageBox.information(self, "Edit Excel", f"Opened Excel file: {file_name}")
+                
+                # Show the dialog box for editing Excel content
+                self.show_table_edit_dialog(wb, sheet, file_name)
+
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Error opening the Excel file: {e}")
+
+    def show_table_edit_dialog(self, wb, sheet, file_name):
+        """Show a dialog with a table to edit the Excel content."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Edit Excel Content")
+
+        # Layout for dialog
+        layout = QVBoxLayout()
+
+        # Create table widget to display the data
+        table_widget = QTableWidget()
+        num_rows = sheet.max_row
+        num_cols = sheet.max_column
+        table_widget.setRowCount(num_rows)
+        table_widget.setColumnCount(num_cols)
+
+        # Fill the table with Excel data
+        for row in range(num_rows):
+            for col in range(num_cols):
+                value = sheet.cell(row=row+1, column=col+1).value
+                table_widget.setItem(row, col, QTableWidgetItem(str(value)))
+
+        # Add Save button to save the edited content back to the Excel file
+        save_button = QPushButton("Save")
+        save_button.clicked.connect(lambda: self.save_table_data(table_widget, file_name))
+
+        # Add Add Row button
+        add_row_button = QPushButton("Add Row")
+        add_row_button.clicked.connect(lambda: self.add_row(table_widget))
+
+        # Add Delete Row button
+        delete_row_button = QPushButton("Delete Row")
+        delete_row_button.clicked.connect(lambda: self.delete_row(table_widget))
+
+        # Add table widget, Add Row button, Delete Row button, and Save button to the layout
+        layout.addWidget(table_widget)
+        layout.addWidget(add_row_button)
+        layout.addWidget(delete_row_button)
+        layout.addWidget(save_button)
+
+        dialog.setLayout(layout)
+
+        dialog.exec_()
+
+    def add_row(self, table_widget):
+        """Add a new row to the table."""
+        row_position = table_widget.rowCount()
+        table_widget.insertRow(row_position)
+        # Optionally, set the cells of the new row to empty values
+        for col in range(table_widget.columnCount()):
+            table_widget.setItem(row_position, col, QTableWidgetItem(''))
+
+    def delete_row(self, table_widget):
+        """Delete the selected row from the table."""
+        selected_row = table_widget.currentRow()
+        if selected_row >= 0:  # If a row is selected
+            table_widget.removeRow(selected_row)
+        else:
+            QMessageBox.warning(self, "No Row Selected", "Please select a row to delete.")
+
+    def save_table_data(self, table_widget, file_name):
+        """Save the edited data from the table back to a new Excel file."""
+        try:
+            num_rows = table_widget.rowCount()
+            num_cols = table_widget.columnCount()
+
+            # Create a new workbook and sheet
+            wb = openpyxl.Workbook()
+            sheet = wb.active
+
+            # Write the table data to the new workbook
+            for row in range(num_rows):
+                for col in range(num_cols):
+                    item = table_widget.item(row, col)
+                    value = item.text() if item else ""  # Ensure no errors for empty cells
+                    sheet.cell(row=row + 1, column=col + 1, value=value)
+
+            # Save the new workbook to the specified file
+            wb.save(file_name)
+
+            # Reload the dropdowns to reflect changes
+            self.dropdown1.clear()
+            self.dropdown2.clear()
+            self.load_excel_data()
+
+            QMessageBox.information(self, "Save Successful", f"Excel file saved successfully: {file_name}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error saving the Excel file: {e}")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
