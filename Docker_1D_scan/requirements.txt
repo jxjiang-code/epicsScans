@@ -1,7 +1,0 @@
-PyQt5
-openpyxl
-numpy
-matplotlib
-pandas
-json
-epics
