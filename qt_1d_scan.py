@@ -6,6 +6,7 @@ import json
 import epics
 import time
 import PyQt5.QtCore as Qt
+from PyQt5.QtGui import QColor
 from scipy.optimize import curve_fit
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QWidget, QLabel, QLineEdit, QPushButton, QComboBox, QTableWidget, QTableWidgetItem, QHBoxLayout, QCheckBox, QMenuBar, QAction, QFileDialog, QMessageBox, QDialog)
@@ -599,7 +600,14 @@ class DynamicPlot(QMainWindow):
         for row in range(num_rows):
             for col in range(num_cols):
                 value = sheet.cell(row=row+1, column=col+1).value
-                table_widget.setItem(row, col, QTableWidgetItem(str(value)))
+                item = QTableWidgetItem(str(value))
+
+                # Make the first row uneditable
+                if row == 0:  
+                    item.setFlags(item.flags() & ~Qt.Qt.ItemIsEditable)  
+                    item.setBackground(QColor("lightgrey"))  
+
+                table_widget.setItem(row, col, item)
 
         # Add Save button to save the edited content back to the Excel file
         save_button = QPushButton("Save")
