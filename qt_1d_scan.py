@@ -9,7 +9,7 @@ import PyQt5.QtCore as Qt
 from PyQt5.QtGui import QColor
 from scipy.optimize import curve_fit
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QVBoxLayout, QWidget, QLabel, QLineEdit, QPushButton, QComboBox, QTableWidget, QTableWidgetItem, QHBoxLayout, QCheckBox, QMenuBar, QAction, QFileDialog, QMessageBox, QDialog)
+    QApplication, QMainWindow, QVBoxLayout, QWidget, QLabel, QLineEdit, QPushButton, QComboBox, QTableWidget, QTableWidgetItem, QHBoxLayout, QCheckBox, QMenuBar, QAction, QFileDialog, QMessageBox, QDialog, QRadioButton, QButtonGroup)
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt5.QtCore import QTimer
@@ -162,8 +162,8 @@ class DynamicPlot(QMainWindow):
 
     def add_scan_parameters_table(self, layout):
         # Create a table with 2 rows and 6 columns
-        self.table = QTableWidget(2, 6)
-        self.table.setHorizontalHeaderLabels(["Start", "Middle", "End", "Step", "Num. of Points", "Time"])
+        self.table = QTableWidget(2, 7)
+        self.table.setHorizontalHeaderLabels(["Start", "Middle", "End", "Step", "Num. of Points", "Time", "Selected"])
         self.table.setVerticalHeaderLabels(["Parameter 1", "Parameter 2"])
 
         # Initialize table with default values
@@ -171,10 +171,37 @@ class DynamicPlot(QMainWindow):
             ["0.000",  "5.000", "10.000", "1.000", "11", "0.500"],
             ["0.000", "10.000", "20.000", "2.000", "11", "1.000"]
         ]
+
+        # List to store radio buttons
+        self.radio_buttons = []
+
+        # Create a QButtonGroup to enforce single selection
+        self.button_group = QButtonGroup(self)
+
         for row in range(2):
             for col in range(6):
                 item = QTableWidgetItem(default_values[row][col])
                 self.table.setItem(row, col, item)
+
+            # Add Radio Button to the last column
+            radio_layout = QHBoxLayout()
+            radio_button = QRadioButton()
+            radio_layout.addWidget(radio_button)
+            radio_layout.setAlignment(Qt.Qt.AlignCenter)  # Center align the radio button
+            radio_widget = QWidget()
+            radio_widget.setLayout(radio_layout)
+
+            self.table.setCellWidget(row, 6, radio_widget)
+
+            # Add the radio button to the list
+            self.radio_buttons.append(radio_button)
+
+            # Add the radio button to the QButtonGroup
+            self.button_group.addButton(radio_button)
+
+        # Set the first radio button checked
+        if self.radio_buttons:
+            self.radio_buttons[0].setChecked(True)
 
         # Connect itemChanged to update dependent values
         self.table.itemChanged.connect(self.on_table_item_changed)
@@ -378,30 +405,33 @@ class DynamicPlot(QMainWindow):
         self.right_marker = None  # Matplotlib artist for right crosshair
         self.middle_marker = None  # Matplotlib artist for the middle point
 
-        """Perform motor scan, record detector and update the plot."""
-        # Timer for updating random data
-        self.current_index = 0
-        # Data for the plot
-        self.data = {"x": [], "y": [], "label": self.text["motor"]}
-
-        """List all checked checkboxes."""
-        self.checked_names = [name for name, checkbox in self.checkboxes.items() if checkbox.isChecked()]
-        for n in np.arange(len(self.checked_names)):
-            self.data[self.checked_names[n]] = {"fit_x": [], "fit_y": [], "optimized values":[]}
         
         # Read the current values for calculation
-        row = 0
-        self.start = float(self.table.item(row, 0).text())
-        self.middle = float(self.table.item(row, 1).text())
-        self.end = float(self.table.item(row, 2).text())
-        self.step = float(self.table.item(row, 3).text())
-        self.num = int(float(self.table.item(row, 4).text()))
-        self.accu = float(self.table.item(row, 5).text())
-        self.scanPos = np.linspace(self.start, self.end, self.num)
+        # Check which radio button is selected
+        for row, radio_button in enumerate(self.radio_buttons):
+            if radio_button.isChecked():
+                self.msglabel1.setText(f"<span style='font-size:16pt; font-weight:bold; color:green;'>Scanning... Parameter {row+1} is selected.")
+                """Perform motor scan, record detector and update the plot."""
+                # Timer for updating random data
+                self.current_index = 0
+                # Data for the plot
+                self.data = {"x": [], "y": [], "label": self.text["motor"]}
 
-        self.scan_timer = QTimer(self)
-        self.scan_timer.timeout.connect(self.update_scan_step)
-        self.scan_timer.start(500)  # Update every 1 second
+                """List all checked checkboxes."""
+                self.checked_names = [name for name, checkbox in self.checkboxes.items() if checkbox.isChecked()]
+                for n in np.arange(len(self.checked_names)):
+                    self.data[self.checked_names[n]] = {"fit_x": [], "fit_y": [], "optimized values":[]}
+                self.start = float(self.table.item(row, 0).text())
+                self.middle = float(self.table.item(row, 1).text())
+                self.end = float(self.table.item(row, 2).text())
+                self.step = float(self.table.item(row, 3).text())
+                self.num = int(float(self.table.item(row, 4).text()))
+                self.accu = float(self.table.item(row, 5).text())
+                self.scanPos = np.linspace(self.start, self.end, self.num)
+
+                self.scan_timer = QTimer(self)
+                self.scan_timer.timeout.connect(self.update_scan_step)
+                self.scan_timer.start(500)  # Update every 1 second
 
     def update_scan_step(self):
         """Update the plot for each step during 1d scan."""
