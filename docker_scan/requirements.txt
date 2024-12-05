@@ -1,7 +1,6 @@
-PyQt5
 openpyxl
 numpy
+scipy
 matplotlib
 pandas
-json
-epics
+pyepics
