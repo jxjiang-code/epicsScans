@@ -40,5 +40,5 @@ This project provides a Python-based GUI application for dynamic plotting and pe
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/jxjiang-code/gisaxs.git
-   cd gisaxs
+   git clone https://github.com/jxjiang-code/epicsScans.git
+   cd epicsScans
